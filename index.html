@@ -140,6 +140,8 @@
     font-size: 15px; font-weight: 600; cursor: pointer; }
   .modal-btn.confirm { background: var(--main); color: #fff; }
   .modal-btn.cancel { background: #f0f0f0; color: var(--text); }
+  .link-btn { display: inline-block; color: var(--main); font-size: 13px; margin-top: 6px;
+    text-decoration: underline; cursor: pointer; }
   .hidden-file { display: none; }
 
   .toast { position: fixed; top: 45%; left: 50%; transform: translate(-50%, -50%);
@@ -200,20 +202,47 @@
 <!-- Backup Modal -->
 <div class="modal-overlay" id="backupModal">
   <div class="modal">
-    <div class="modal-title">数据备份</div>
-    <div style="text-align:center;font-size:13px;color:var(--sub);margin-bottom:14px;">
-      数据保存在本机，换手机或清缓存前请先导出
+    <div class="modal-title">数据备份与同步</div>
+    <div style="text-align:center;font-size:13px;color:var(--sub);margin-bottom:12px;">
+      数据默认只存在本机<br>建议开启云端同步，换手机/清缓存也不丢
     </div>
+
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin:4px 0 8px;">&#9729; 云端同步（推荐）</div>
     <div class="modal-btns">
-      <button class="modal-btn confirm" onclick="exportData()">导出备份</button>
-      <button class="modal-btn cancel" style="background:#f0f0f0" onclick="document.getElementById('importFile').click()">导入恢复</button>
+      <button class="modal-btn confirm" onclick="cloudUpload()">上传到云端</button>
+      <button class="modal-btn" style="background:#f0f0f0;color:var(--text)" onclick="cloudDownload()">从云端拉取</button>
     </div>
-    <div class="modal-btns" style="margin-top:8px">
+    <div style="text-align:center;font-size:12px;color:var(--sub);margin-top:8px;" id="cloudStatus"></div>
+    <div style="text-align:center;"><span class="link-btn" onclick="showCloudConfig()">云端配置（填账号）</span></div>
+
+    <div style="height:1px;background:#eee;margin:14px 0;"></div>
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin:0 0 8px;">&#128229; 本机备份文件</div>
+    <div class="modal-btns">
+      <button class="modal-btn confirm" onclick="exportData()">导出文件</button>
+      <button class="modal-btn cancel" style="background:#f0f0f0" onclick="document.getElementById('importFile').click()">导入文件</button>
+    </div>
+
+    <div class="modal-btns" style="margin-top:12px">
       <button class="modal-btn cancel" onclick="closeModal('backupModal')">关闭</button>
     </div>
   </div>
 </div>
 <input type="file" id="importFile" accept=".json" onchange="importData(this)" class="hidden-file">
+
+<!-- Cloud Config Modal -->
+<div class="modal-overlay" id="cloudConfigModal">
+  <div class="modal">
+    <div class="modal-title">云端同步配置</div>
+    <div style="font-size:12px;color:var(--sub);margin-bottom:12px;">填一次即可。数据会上传到你的 GitHub 云端，永久保存。</div>
+    <div class="modal-group"><label>GitHub Token</label><input type="password" class="modal-input" id="cfgToken"></div>
+    <div class="modal-group"><label>用户名</label><input type="text" class="modal-input" id="cfgOwner"></div>
+    <div class="modal-group"><label>仓库名</label><input type="text" class="modal-input" id="cfgRepo"></div>
+    <div class="modal-btns">
+      <button class="modal-btn cancel" onclick="closeModal('cloudConfigModal')">取消</button>
+      <button class="modal-btn confirm" onclick="saveCloudConfig()">保存</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -390,7 +419,10 @@
   });
 
   // ===== Backup =====
-  window.openBackupModal = function() { document.getElementById('backupModal').classList.add('show'); };
+  window.openBackupModal = function() {
+    updateCloudStatus();
+    document.getElementById('backupModal').classList.add('show');
+  };
   window.exportData = function() {
     var payload = { version: 1, exportedAt: new Date().toISOString(), records: appData.records };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -421,6 +453,99 @@
       input.value = '';
     };
     reader.readAsText(file);
+  };
+
+  // ===== Cloud sync (GitHub) =====
+  var CFG_KEY = 'simple_ledger_cloud';
+  function getCloudCfg() { try { return JSON.parse(localStorage.getItem(CFG_KEY)) || {}; } catch(e) { return {}; } }
+  function saveCloudCfgLocal(cfg) { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); }
+  function getApiUrl() {
+    var cfg = getCloudCfg();
+    return 'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + '/contents/ledger_data.json';
+  }
+  function updateCloudStatus() {
+    var cfg = getCloudCfg();
+    var st = document.getElementById('cloudStatus');
+    if (cfg.owner && cfg.repo) {
+      st.innerHTML = (cfg.lastSync ? '上次同步：' + new Date(cfg.lastSync).toLocaleString('zh-CN')
+        : '已配置，点「上传到云端」即可保存');
+    } else {
+      st.textContent = '尚未配置';
+    }
+  }
+  window.showCloudConfig = function() {
+    var cfg = getCloudCfg();
+    document.getElementById('cfgToken').value = cfg.token || '';
+    document.getElementById('cfgOwner').value = cfg.owner || '';
+    document.getElementById('cfgRepo').value = cfg.repo || '';
+    document.getElementById('cloudConfigModal').classList.add('show');
+  };
+  window.saveCloudConfig = function() {
+    var cfg = {
+      token: document.getElementById('cfgToken').value.trim(),
+      owner: document.getElementById('cfgOwner').value.trim(),
+      repo: document.getElementById('cfgRepo').value.trim(),
+      lastSync: getCloudCfg().lastSync || ''
+    };
+    if (!cfg.token || !cfg.owner || !cfg.repo) { showToast('请填写完整'); return; }
+    saveCloudCfgLocal(cfg);
+    closeModal('cloudConfigModal');
+    updateCloudStatus();
+    showToast('配置已保存');
+  };
+  function cloudPut(cb) {
+    var cfg = getCloudCfg();
+    if (!cfg.token || !cfg.owner || !cfg.repo) { showToast('请先配置云端账号'); showCloudConfig(); return; }
+    var payload = JSON.stringify({ version: 1, syncedAt: new Date().toISOString(), records: appData.records });
+    var b64 = btoa(unescape(encodeURIComponent(payload)));
+    var url = getApiUrl();
+    var bodyData = { message: '记账同步 ' + new Date().toLocaleString('zh-CN'), content: b64, branch: 'main' };
+    // 先查已有文件拿 sha
+    fetch(url, { headers: { 'Authorization': 'token ' + cfg.token } })
+      .then(function(r) { return r.ok ? r.json().then(function(d){ bodyData.sha = d.sha; return true; }) : true; })
+      .then(function() {
+        return fetch(url, { method: 'PUT',
+          headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify(bodyData) });
+      })
+      .then(function(r) {
+        if (r.ok) {
+          cfg.lastSync = Date.now(); saveCloudCfgLocal(cfg);
+          updateCloudStatus();
+          if (cb) cb(true);
+        } else { if (cb) cb(false); }
+      })
+      .catch(function(){ if (cb) cb(false); });
+  }
+  window.cloudUpload = function() {
+    showToast('上传中…');
+    cloudPut(function(ok){ showToast(ok ? '已上传到云端' : '上传失败，请检查配置'); });
+  };
+  window.cloudDownload = function() {
+    var cfg = getCloudCfg();
+    if (!cfg.token || !cfg.owner || !cfg.repo) { showToast('请先配置云端账号'); showCloudConfig(); return; }
+    showToast('同步中…');
+    fetch(getApiUrl(), { headers: { 'Authorization': 'token ' + cfg.token } })
+      .then(function(r) {
+        if (!r.ok) { showToast('云端暂无数据'); return null; }
+        return r.json();
+      })
+      .then(function(d) {
+        if (!d || !d.content) return;
+        var payload = JSON.parse(decodeURIComponent(escape(atob(d.content))));
+        var recs = Array.isArray(payload.records) ? payload.records : [];
+        if (recs.length || !appData.records.length) {
+          appData.records = recs;
+          saveData(appData);
+          cfg.lastSync = Date.now(); saveCloudCfgLocal(cfg);
+          updateCloudStatus();
+          showToast('已从云端同步，' + appData.records.length + ' 笔');
+          render();
+        } else {
+          showToast('云端是空的，本地有数据');
+        }
+      })
+      .catch(function(){ showToast('网络错误'); });
   };
 
   // init
